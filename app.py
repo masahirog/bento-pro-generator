@@ -503,7 +503,7 @@ else:
                 final_prompt = f"{rotation_instruction}\n\n{style_part}\n\n{lighting_part}\n\n{content_part}"
 
                 # Step 3: 画像生成
-                status_text.text("Step 3/3: 元画像を参照しながらプロ写真を生成中...")
+                status_text.text("Step 3/3: 元画像を参照しながらプロ写真に加工中...")
                 progress_bar.progress(100)
                 step3_start = time.time()
 
@@ -560,7 +560,7 @@ Subject Content for reference:
                     generated_image = Image.open(io.BytesIO(generated_image_data))
 
                     with result_placeholder.container():
-                        st.image(generated_image, caption="生成されたプロ写真", width=600)
+                        st.image(generated_image, caption="加工後の写真", width=600)
 
                         # ダウンロードボタン
                         buf = io.BytesIO()
@@ -601,7 +601,7 @@ Subject Content for reference:
                     }
                     save_metadata_to_s3(metadata, f"{timestamp}/metadata.json")
 
-                    status_text.success(f"生成完了 | 解析: {step1_time:.2f}秒 | 生成: {step3_time:.2f}秒 | 合計: {total_time:.2f}秒")
+                    status_text.success(f"加工完了 | 解析: {step1_time:.2f}秒 | 加工: {step3_time:.2f}秒 | 合計: {total_time:.2f}秒")
                     progress_bar.empty()
                     st.session_state.processing = False
                     st.session_state.generation_completed = True
@@ -612,7 +612,7 @@ Subject Content for reference:
                     time.sleep(1)
                     st.rerun()
                 else:
-                    st.error("画像生成に失敗しました。もう一度お試しください。")
+                    st.error("画像加工に失敗しました。もう一度お試しください。")
                     status_text.empty()
                     progress_bar.empty()
                     st.session_state.processing = False
