@@ -91,7 +91,7 @@ def get_image_from_s3(key):
         response = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=key)
         return Image.open(io.BytesIO(response['Body'].read()))
     except ClientError as e:
-        st.error(f"S3ダウンロードエラー: {str(e)}")
+        # サムネイルが存在しない場合など、静かに None を返す
         return None
 
 def get_metadata_from_s3(key):
@@ -171,21 +171,26 @@ if not os.path.exists(HISTORY_DIR):
     os.makedirs(HISTORY_DIR)
 
 
+# S3から履歴一覧を取得
+history_folders = list_history_from_s3()
+
 # サイドバー：AI加工ボタンと履歴
 with st.sidebar:
     # AI加工ボタン
-    if st.button("TOP", use_container_width=True, type="primary"):
+    if st.button("新規画像加工", use_container_width=True, type="primary"):
         st.session_state.selected_history = None
         st.query_params.clear()
         st.rerun()
 
+    if st.button("加工履歴一覧", use_container_width=True, type="secondary"):
+        st.query_params['view'] = 'list'
+        st.session_state.selected_history = None
+        st.rerun()
+
     st.markdown("---")
 
-    # S3から履歴一覧を取得
-    history_folders = list_history_from_s3()
-
     if history_folders:
-        st.markdown(f"**履歴 {len(history_folders)}件**")
+        st.markdown(f"**直近の履歴 {len(history_folders)}件**")
 
         # 最新10件をボタンとして表示
         for folder in history_folders[:10]:
@@ -221,9 +226,135 @@ h1 a, h2 a, h3 a, h4 a {
 """, unsafe_allow_html=True)
 
 # メインエリア
-# 履歴が選択されている場合は履歴詳細を表示
-if 'selected_history' in st.session_state and st.session_state.selected_history:
-    st.markdown(f"**履歴詳細:** `{st.session_state.selected_history}`")
+# クエリパラメータでビューモードを判定
+view_mode = st.query_params.get('view', None)
+
+# 一覧ページ
+if view_mode == 'list':
+    st.title("履歴一覧")
+
+    # S3から全履歴を取得
+    history_folders = list_history_from_s3()
+
+    # 検索機能
+    st.markdown("### 検索・絞り込み")
+    search_query = st.text_input("タイトル、タグ、内容で検索", placeholder="例: ハンバーグ")
+
+    # ページネーション設定
+    items_per_page = 20
+    total_pages = (len(history_folders) - 1) // items_per_page + 1 if history_folders else 0
+
+    # セッションステートでページ番号を管理
+    if 'list_page' not in st.session_state:
+        st.session_state.list_page = 0
+
+    # ページ番号選択
+    if total_pages > 1:
+        col_prev, col_page, col_next = st.columns([1, 2, 1])
+        with col_prev:
+            if st.button("◀ 前へ", disabled=st.session_state.list_page == 0):
+                st.session_state.list_page -= 1
+                st.rerun()
+        with col_page:
+            st.markdown(f"**{st.session_state.list_page + 1} / {total_pages} ページ**", unsafe_allow_html=True)
+        with col_next:
+            if st.button("次へ ▶", disabled=st.session_state.list_page >= total_pages - 1):
+                st.session_state.list_page += 1
+                st.rerun()
+
+    st.markdown("---")
+
+    # 履歴を取得してフィルタリング
+    start_idx = st.session_state.list_page * items_per_page
+    end_idx = start_idx + items_per_page
+    page_folders = history_folders[start_idx:end_idx]
+
+    # メタデータを取得してフィルタリング
+    filtered_items = []
+    for folder in page_folders:
+        metadata = get_metadata_from_s3(f"{folder}/metadata.json")
+        if metadata:
+            # 検索クエリでフィルタリング
+            if search_query:
+                search_text = f"{metadata.get('title', '')} {' '.join(metadata.get('tags', []))} {metadata.get('description', '')}"
+                if search_query.lower() not in search_text.lower():
+                    continue
+            filtered_items.append((folder, metadata))
+
+    # グリッド表示（4列）
+    if filtered_items:
+        st.markdown(f"**{len(filtered_items)}件の履歴**")
+        cols_per_row = 4
+        for i in range(0, len(filtered_items), cols_per_row):
+            cols = st.columns(cols_per_row)
+            for j, col in enumerate(cols):
+                if i + j < len(filtered_items):
+                    folder, metadata = filtered_items[i + j]
+                    with col:
+                        # 固定高さのコンテナを作成
+                        with st.container():
+                            # カード全体のHTMLを構築（固定高さ）
+                            thumbnail = get_image_from_s3(f"{folder}/thumbnail.png")
+                            if not thumbnail:
+                                thumbnail = get_image_from_s3(f"{folder}/generated.png")
+
+                            # 画像HTML
+                            if thumbnail:
+                                # 画像を一時的に保存してbase64エンコード
+                                import base64
+                                from io import BytesIO
+                                buffered = BytesIO()
+                                thumbnail.save(buffered, format="PNG")
+                                img_str = base64.b64encode(buffered.getvalue()).decode()
+                                img_html = f'<img src="data:image/png;base64,{img_str}" style="width: 100%; height: 200px; object-fit: cover; border-radius: 4px;">'
+                            else:
+                                img_html = '<div style="height: 200px; background-color: #f0f0f0; display: flex; align-items: center; justify-content: center; border-radius: 4px;">画像なし</div>'
+
+                            # タイトルHTML
+                            title = metadata.get('title', folder)
+                            if metadata.get('favorite', False):
+                                title_html = f'<div style="background-color: #fff3cd; padding: 8px; border-radius: 4px; border-left: 4px solid #ffc107; height: 60px; display: flex; align-items: center; overflow: hidden;"><strong>{title}</strong></div>'
+                            else:
+                                title_html = f'<div style="height: 60px; display: flex; align-items: center; overflow: hidden; padding: 8px;"><strong>{title}</strong></div>'
+
+                            # タグHTML
+                            tags_str = " ".join([f"<code>{tag}</code>" for tag in metadata.get('tags', [])])
+                            tags_html = f'<div style="height: 40px; font-size: 0.85em; overflow: hidden; padding: 4px 8px;">{tags_str if tags_str else "&nbsp;"}</div>'
+
+                            # カード全体をHTMLで表示（ボタンエリアを除く）
+                            st.markdown(f'''
+                                <div style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; background-color: white; margin-bottom: 8px;">
+                                    <div style="margin-bottom: 8px;">
+                                        {img_html}
+                                    </div>
+                                    <div style="margin-bottom: 4px;">
+                                        {title_html}
+                                    </div>
+                                    <div style="margin-bottom: 8px;">
+                                        {tags_html}
+                                    </div>
+                                </div>
+                            ''', unsafe_allow_html=True)
+
+                            # 詳細ボタンをカードの下部に配置
+                            if st.button("詳細", key=f"detail_{folder}", use_container_width=True):
+                                st.session_state.selected_history = folder
+                                st.query_params['history'] = folder
+                                st.query_params.pop('view', None)
+                                st.rerun()
+    else:
+        st.info("該当する履歴がありません")
+
+# 履歴編集ページ
+elif 'selected_history' in st.session_state and st.session_state.selected_history and st.query_params.get('edit') == 'true':
+    # 一覧に戻るボタン
+    if st.button("← 一覧に戻る"):
+        st.session_state.selected_history = None
+        st.query_params.clear()
+        st.query_params['view'] = 'list'
+        st.rerun()
+
+    st.title("履歴を編集")
 
     # S3から履歴データを読み込む
     timestamp = st.session_state.selected_history
@@ -232,6 +363,129 @@ if 'selected_history' in st.session_state and st.session_state.selected_history:
         metadata = get_metadata_from_s3(f"{timestamp}/metadata.json")
 
     if metadata:
+        st.markdown(f"**履歴ID:** `{timestamp}`")
+        st.markdown("---")
+
+        # 編集フォーム
+        with st.form("edit_form"):
+            st.markdown("### メタデータ編集")
+
+            # タイトル編集
+            edited_title = st.text_input(
+                "タイトル",
+                value=metadata.get('title', ''),
+                max_chars=50,
+                placeholder="例: ハンバーグ弁当"
+            )
+
+            # 説明文編集
+            edited_description = st.text_area(
+                "説明文",
+                value=metadata.get('description', ''),
+                max_chars=200,
+                placeholder="弁当の簡単な説明を入力",
+                height=100
+            )
+
+            # タグ編集（カンマ区切り）
+            current_tags = metadata.get('tags', [])
+            tags_str = ", ".join(current_tags) if current_tags else ""
+            edited_tags_str = st.text_input(
+                "タグ（カンマ区切り）",
+                value=tags_str,
+                placeholder="例: ハンバーグ, 和食, 唐揚げ"
+            )
+
+            # お気に入り設定
+            edited_favorite = st.checkbox(
+                "お気に入りに設定",
+                value=metadata.get('favorite', False)
+            )
+
+            st.markdown("---")
+            col_save, col_cancel = st.columns(2)
+
+            with col_save:
+                save_button = st.form_submit_button("保存", type="primary", use_container_width=True)
+
+            with col_cancel:
+                cancel_button = st.form_submit_button("キャンセル", use_container_width=True)
+
+        # 保存処理
+        if save_button:
+            # タグをリストに変換
+            edited_tags = [tag.strip() for tag in edited_tags_str.split(',') if tag.strip()]
+
+            # メタデータを更新
+            metadata['title'] = edited_title
+            metadata['description'] = edited_description
+            metadata['tags'] = edited_tags
+            metadata['favorite'] = edited_favorite
+
+            # S3に保存
+            if save_metadata_to_s3(metadata, f"{timestamp}/metadata.json"):
+                st.success("保存しました！")
+                st.query_params.pop('edit', None)
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error("保存に失敗しました")
+
+        # キャンセル処理
+        if cancel_button:
+            st.query_params.pop('edit', None)
+            st.rerun()
+
+    else:
+        st.error("履歴データが見つかりません")
+        if st.button("← 戻る"):
+            st.session_state.selected_history = None
+            st.query_params.clear()
+            st.rerun()
+
+# 履歴が選択されている場合は履歴詳細を表示
+elif 'selected_history' in st.session_state and st.session_state.selected_history:
+    # 一覧に戻るボタン
+    if st.button("← 一覧に戻る"):
+        st.session_state.selected_history = None
+        st.query_params.clear()
+        st.query_params['view'] = 'list'
+        st.rerun()
+
+    # S3から履歴データを読み込む
+    timestamp = st.session_state.selected_history
+
+    with st.spinner("履歴データを読み込み中..."):
+        metadata = get_metadata_from_s3(f"{timestamp}/metadata.json")
+
+    if metadata:
+        # タイトル、お気に入り、編集ボタンを表示
+        col_title, col_fav_btn, col_edit_btn = st.columns([3, 1, 1])
+        with col_title:
+            st.title(metadata.get('title', '弁当'))
+
+        with col_fav_btn:
+            is_favorite = metadata.get('favorite', False)
+            fav_label = "お気に入り解除" if is_favorite else "お気に入り"
+            if st.button(fav_label, use_container_width=True):
+                # お気に入り状態を切り替え
+                metadata['favorite'] = not is_favorite
+                if save_metadata_to_s3(metadata, f"{timestamp}/metadata.json"):
+                    st.rerun()
+                else:
+                    st.error("更新に失敗しました")
+
+        with col_edit_btn:
+            if st.button("編集", use_container_width=True, key="edit_btn"):
+                st.query_params['edit'] = 'true'
+                st.rerun()
+
+        if metadata.get('tags'):
+            tags_str = " ".join([f"`{tag}`" for tag in metadata.get('tags', [])])
+            st.markdown(tags_str)
+        if metadata.get('description'):
+            st.markdown(f"*{metadata.get('description')}*")
+        st.markdown(f"**履歴詳細:** `{st.session_state.selected_history}`")
         # 設定情報表示
         st.markdown("### 設定情報")
         col_info1, col_info2, col_info3, col_info4, col_info5, col_info6 = st.columns(6)
@@ -338,7 +592,7 @@ else:
     st.markdown("#### 撮影角度")
     angle = st.radio(
         "angle_label",
-        ["斜め45度", "真上俯瞰", "やや低め30度"],
+        ["斜め45度", "真上俯瞰"],
         horizontal=True,
         label_visibility="collapsed"
     )
@@ -443,9 +697,42 @@ else:
                 )
 
                 analyzed_content = response.text.strip()
+
+                # メタデータ生成（タイトル、説明、タグ）
+                metadata_prompt = """
+                Based on this bento description, generate the following metadata in JSON format:
+                - title: A short Japanese title (max 20 characters, e.g., "ハンバーグ弁当", "幕の内弁当")
+                - description: A brief Japanese description (max 50 characters)
+                - tags: An array of 3-5 Japanese search tags (e.g., ["ハンバーグ", "和食", "唐揚げ"])
+
+                Return ONLY valid JSON in this exact format:
+                {
+                  "title": "...",
+                  "description": "...",
+                  "tags": ["...", "...", "..."]
+                }
+
+                Bento description:
+                """ + analyzed_content
+
+                metadata_response = client.models.generate_content(
+                    model='gemini-2.0-flash-exp',
+                    contents=metadata_prompt
+                )
+
+                # JSONをパース
+                import json
+                metadata_text = metadata_response.text.strip()
+                # マークダウンのコードブロックを削除
+                if metadata_text.startswith("```"):
+                    metadata_text = metadata_text.split("```")[1]
+                    if metadata_text.startswith("json"):
+                        metadata_text = metadata_text[4:]
+                metadata_dict = json.loads(metadata_text.strip())
+
                 step1_time = time.time() - step1_start
 
-                st.success(f"解析完了 ({step1_time:.2f}秒): {analyzed_content[:100]}...")
+                st.success(f"解析完了 ({step1_time:.2f}秒): {metadata_dict['title']} - {analyzed_content[:80]}...")
 
                 # Step 2: プロンプト合成
                 status_text.text("Step 2/3: プロンプトを合成中...")
@@ -460,17 +747,22 @@ else:
                     "和紙": "traditional Japanese washi paper background"
                 }
 
-                # 撮影角度設定（y軸方向：テーブル面に対するカメラ角度）
+                # 撮影角度設定（y軸方向：カメラの高さ/俯瞰度）
                 angle_map = {
-                    "斜め45度": "Camera angle: EXACTLY 45 degrees from the table surface (NOT overhead, NOT 90 degrees). The camera looks down at the bento from a diagonal elevated position, maintaining a clear 45-degree angle between the camera and the table.",
-                    "真上俯瞰": "Camera angle: 90 degrees (directly overhead, bird's-eye view). The camera is positioned straight above the bento, perpendicular to the table surface.",
-                    "やや低め30度": "Camera angle: 30 degrees from the table surface. Lower elevated angle shot, closer to eye-level than overhead."
+                    "斜め45度": "The camera is positioned at a moderate height above the table, looking down at the bento box at approximately 30-40 degrees from horizontal. This angle shows both the top surface of the food AND the front vertical side wall of the container clearly, creating depth while maintaining visibility of contents.",
+                    "真上俯瞰": "The camera is positioned DIRECTLY overhead at 90 degrees, perfectly perpendicular to the table surface. Pure bird's eye view looking STRAIGHT DOWN. NO angle whatsoever - completely flat, top-down perspective."
                 }
 
-                # 弁当の向き設定（水平回転）- 命令形で直接的に指示
+                # 弁当の向き設定（テーブル上での物理的な配置）
                 rotation_map = {
-                    "正面配置": "Place the bento box perfectly straight and parallel to the camera frame, with all edges aligned to the image borders. NO rotation whatsoever.",
-                    "斜め配置": "Rotate the bento box diagonally (about 45 degrees clockwise) to create dynamic depth and visual interest. The box should NOT be parallel to the frame."
+                    "正面配置": {
+                        "rule": "**[Crucial: Orientation & Alignment]**\n* The bento box is NOT rotated diagonally on the table surface.\n* The edges of the box are perfectly parallel to the frame edges (top edge parallel to top of frame, sides parallel to sides of frame).\n* NO rotation whatsoever. The box maintains a straight, unrotated position.",
+                        "description": "The box faces the camera squarely."
+                    },
+                    "斜め配置": {
+                        "rule": "**[Crucial: Orientation & Alignment]**\n* The bento box IS rotated diagonally on the table surface.\n* The box is tilted approximately 45 degrees CLOCKWISE (from viewer's perspective).\n* One corner of the box points towards the top of the frame, creating a diamond-like orientation.",
+                        "description": "Creates dynamic diagonal depth."
+                    }
                 }
 
                 # 照明設定
@@ -487,20 +779,26 @@ else:
                     "広い": "The bento box occupies only 40-50% of the frame. MUST leave generous margins and plenty of negative space around all sides. The bento should be small in the frame, NOT filling it."
                 }
 
-                # 1. 回転指示（最優先で最初に配置）
-                rotation_instruction = rotation_map[rotation]
+                # プロンプト構成: 重要ルール → カメラ設定 → 配置 → 照明 → 内容
 
-                # 2. 基本スタイルとアングル（選択に応じて動的生成）
-                style_part = f"Professional commercial food photography. {angle_map[angle]} The bento box is placed on a {background_map[background]}. {margin_map[margin]}"
+                # 1. 弁当の向き（最優先ルール）
+                rotation_rule = rotation_map[rotation]["rule"]
+                rotation_desc = rotation_map[rotation]["description"]
 
-                # 3. 光と質感（選択に応じて動的生成）+ 湯気禁止
-                lighting_part = f"{lighting_map[lighting]} NO steam, NO vapor. 8k resolution, highly detailed."
+                # 2. カメラ設定
+                camera_setup = f"**[Camera Angle & Perspective]**\n* {angle_map[angle]}"
 
-                # 4. 中身の指定（可変：画像解析結果をそのまま採用）
-                content_part = f"Subject Description: {analyzed_content}"
+                # 3. 背景と余白
+                environment = f"**[Environment & Composition]**\n* The bento box is placed on a {background_map[background]}.\n* {margin_map[margin]}"
 
-                # 最終プロンプト（回転指示を最初に配置）
-                final_prompt = f"{rotation_instruction}\n\n{style_part}\n\n{lighting_part}\n\n{content_part}"
+                # 4. 照明
+                lighting_section = f"**[Lighting & Style]**\n* {lighting_map[lighting]}\n* NO steam, NO vapor. 8k resolution, highly detailed."
+
+                # 5. 内容
+                content_part = f"**[Contents Description]**\n{analyzed_content}"
+
+                # 最終プロンプト（ルール → カメラ → 環境 → 照明 → 内容の順）
+                final_prompt = f"Professional commercial food photography.\n\n{rotation_rule}\n\n{camera_setup}\n\n{environment}\n\n{lighting_section}\n\n{content_part}"
 
                 # Step 3: 画像生成
                 status_text.text("Step 3/3: 元画像を参照しながらプロ写真に加工中...")
@@ -522,20 +820,21 @@ CONTAINER CLEANING:
                 reference_prompt = f"""
 Refine this specific image into a professional commercial food photography style.
 
-STRICT CONSTRAINTS:
+**CRITICAL CONSTRAINTS - MUST FOLLOW EXACTLY:**
 1. Keep the EXACT container type, material, color, and shape shown in the input image.
 2. Keep the EXACT food arrangement and portion sizes shown in the input image. Do NOT add extra food.
-3. Apply the following style:
 
-{rotation_instruction}
+{rotation_rule}
 
-{style_part}
+{camera_setup}
 
-{lighting_part}
+{environment}
+
+{lighting_section}
 
 {container_clean_instruction}
 
-Subject Content for reference:
+**[Contents Description]**
 {analyzed_content}
 """
 
@@ -584,9 +883,18 @@ Subject Content for reference:
                     # 生成画像をS3に保存
                     save_image_to_s3(generated_image, f"{timestamp}/generated.png")
 
+                    # サムネイル生成（長辺400px）
+                    thumbnail = generated_image.copy()
+                    thumbnail.thumbnail((400, 400), Image.Resampling.LANCZOS)
+                    save_image_to_s3(thumbnail, f"{timestamp}/thumbnail.png")
+
                     # メタデータを保存
                     metadata = {
                         "timestamp": timestamp,
+                        "title": metadata_dict.get("title", "弁当"),
+                        "description": metadata_dict.get("description", ""),
+                        "tags": metadata_dict.get("tags", []),
+                        "favorite": False,
                         "background": background,
                         "angle": angle,
                         "lighting": lighting,
