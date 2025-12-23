@@ -628,7 +628,7 @@ else:
     st.markdown("#### 弁当の向き")
     rotation = st.radio(
         "rotation_label",
-        ["正面配置", "斜め配置"],
+        ["斜め配置", "正面配置"],
         horizontal=True,
         label_visibility="collapsed"
     )
