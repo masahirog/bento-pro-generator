@@ -585,6 +585,15 @@ else:
     st.markdown("---")
     st.markdown("### スタイル設定")
 
+    st.markdown("#### 画像サイズ")
+    aspect_ratio = st.radio(
+        "aspect_ratio_label",
+        ["正方形(1:1)", "縦長(3:4)", "横長(4:3)"],
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+
+
     st.markdown("#### 背景")
     background = st.radio(
         "background_label",
@@ -601,10 +610,10 @@ else:
         label_visibility="collapsed"
     )
 
-    st.markdown("#### 照明スタイル")
-    lighting = st.radio(
-        "lighting_label",
-        ["明るいスタジオ", "柔らか自然光", "ドラマチック"],
+    st.markdown("#### 弁当の向き")
+    rotation = st.radio(
+        "rotation_label",
+        ["斜め配置", "正面配置"],
         horizontal=True,
         label_visibility="collapsed"
     )
@@ -617,29 +626,24 @@ else:
         label_visibility="collapsed"
     )
 
-    st.markdown("#### 画像サイズ")
-    aspect_ratio = st.radio(
-        "aspect_ratio_label",
-        ["正方形(1:1)", "縦長(3:4)", "横長(4:3)"],
+
+    st.markdown("#### 照明スタイル")
+    lighting = st.radio(
+        "lighting_label",
+        ["明るいスタジオ", "柔らか自然光", "ドラマチック"],
         horizontal=True,
         label_visibility="collapsed"
     )
 
-    st.markdown("#### 弁当の向き")
-    rotation = st.radio(
-        "rotation_label",
-        ["斜め配置", "正面配置"],
-        horizontal=True,
-        label_visibility="collapsed"
-    )
 
-    st.markdown("#### 容器汚れ補正")
+    st.markdown("#### 容器の汚れ補正")
     container_clean = st.radio(
         "container_clean_label",
         ["補正なし", "容器汚れを補正"],
         horizontal=True,
         label_visibility="collapsed"
     )
+    st.markdown("※汚れ補正をすると中身も少し変化してしまう場合があります")
 
     # 生成画像エリア
     st.markdown("---")
@@ -647,11 +651,11 @@ else:
     result_placeholder = st.empty()
 
     with result_placeholder.container():
-        st.info("画像をアップロードして「変換」ボタンを押してください。何度も押さないように注意してください。")
+        st.info("ボタンは何度も押さないように注意してください。1枚約30秒ほど加工に時間がかかります。")
 
     # 変換ボタン（生成完了後は非表示）
     if uploaded_file and not st.session_state.generation_completed:
-        if st.button("プロ写真に変換", type="primary", use_container_width=True):
+        if st.button("写真を加工する", type="primary", use_container_width=True):
             st.session_state.processing = True
             try:
                 start_time = time.time()  # 全体開始時間
