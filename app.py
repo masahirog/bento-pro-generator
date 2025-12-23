@@ -488,7 +488,7 @@ elif 'selected_history' in st.session_state and st.session_state.selected_histor
         st.markdown(f"**履歴詳細:** `{st.session_state.selected_history}`")
         # 設定情報表示
         st.markdown("### 設定情報")
-        col_info1, col_info2, col_info3, col_info4, col_info5, col_info6 = st.columns(6)
+        col_info1, col_info2, col_info3, col_info4 = st.columns(4)
         with col_info1:
             st.metric("背景", metadata.get('background', 'N/A'))
         with col_info2:
@@ -497,12 +497,16 @@ elif 'selected_history' in st.session_state and st.session_state.selected_histor
             st.metric("照明", metadata.get('lighting', 'N/A'))
         with col_info4:
             st.metric("余白", metadata.get('margin', 'N/A'))
-        with col_info5:
-            st.metric("向き", metadata.get('rotation', 'N/A'))
-        with col_info6:
-            st.metric("容器補正", metadata.get('container_clean', 'N/A'))
 
-        st.metric("処理時間", f"{metadata.get('total_time', 0):.2f}秒")
+        col_info5, col_info6, col_info7, col_info8 = st.columns(4)
+        with col_info5:
+            st.metric("サイズ", metadata.get('aspect_ratio', 'N/A'))
+        with col_info6:
+            st.metric("向き", metadata.get('rotation', 'N/A'))
+        with col_info7:
+            st.metric("容器補正", metadata.get('container_clean', 'N/A'))
+        with col_info8:
+            st.metric("処理時間", f"{metadata.get('total_time', 0):.2f}秒")
 
         # 画像表示（列幅調整で中央寄せ）
         st.markdown("### 画像比較")
@@ -608,7 +612,15 @@ else:
     st.markdown("#### 余白サイズ")
     margin = st.radio(
         "margin_label",
-        ["狭い", "標準", "広い"],
+        ["標準", "広い"],
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+
+    st.markdown("#### 画像サイズ")
+    aspect_ratio = st.radio(
+        "aspect_ratio_label",
+        ["正方形(1:1)", "縦長(3:4)", "横長(4:3)"],
         horizontal=True,
         label_visibility="collapsed"
     )
@@ -772,11 +784,10 @@ else:
                     "ドラマチック": "Dramatic side lighting with strong shadows. The food looks bold, artistic, and textured."
                 }
 
-                # 余白設定
+                # 余白設定（構図の概念で指定し、縁が見切れないことを保証）
                 margin_map = {
-                    "狭い": "The bento box occupies approximately 80-90% of the frame with minimal margins. Close-up composition.",
-                    "標準": "The bento box occupies approximately 60-70% of the frame with moderate margins around it, centered in the composition.",
-                    "広い": "The bento box occupies only 40-50% of the frame. MUST leave generous margins and plenty of negative space around all sides. The bento should be small in the frame, NOT filling it."
+                    "標準": "With some negative space around the bento box. A little breathing room on the table surface. Not cropped tightly. Centered composition. The entire bento box must fit completely within the frame with NO edges cut off.",
+                    "広い": "Ample negative space. Vast empty table surface surrounding the bento box. Minimalist composition with lots of empty space. Long shot. The bento box is small in the center of the large frame. The entire bento box must fit completely within the frame with NO edges cut off."
                 }
 
                 # プロンプト構成: 重要ルール → カメラ設定 → 配置 → 照明 → 内容
@@ -841,11 +852,21 @@ Refine this specific image into a professional commercial food photography style
                 # 画像ストリームを先頭に戻す
                 img_byte_arr.seek(0)
 
+                # アスペクト比マッピング（プロンプト用）
+                aspect_ratio_prompt_map = {
+                    "正方形(1:1)": "**[Output Format]**\nGenerate the output image in SQUARE format with 1:1 aspect ratio (width equals height).",
+                    "縦長(3:4)": "**[Output Format]**\nGenerate the output image in PORTRAIT/VERTICAL format with 3:4 aspect ratio (width:height = 3:4, taller than wide).",
+                    "横長(4:3)": "**[Output Format]**\nGenerate the output image in LANDSCAPE/HORIZONTAL format with 4:3 aspect ratio (width:height = 4:3, wider than tall)."
+                }
+
+                # アスペクト比指定をプロンプトに追加
+                reference_prompt_with_aspect = f"{reference_prompt}\n\n{aspect_ratio_prompt_map[aspect_ratio]}"
+
                 # 新SDK: Gemini 3 Pro Image で画像生成
                 generation_response = client.models.generate_content(
                     model='gemini-3-pro-image-preview',
                     contents=[
-                        reference_prompt,
+                        reference_prompt_with_aspect,
                         Image.open(img_byte_arr)
                     ]
                 )
@@ -899,6 +920,7 @@ Refine this specific image into a professional commercial food photography style
                         "angle": angle,
                         "lighting": lighting,
                         "margin": margin,
+                        "aspect_ratio": aspect_ratio,
                         "rotation": rotation,
                         "container_clean": container_clean,
                         "analyzed_content": analyzed_content,
