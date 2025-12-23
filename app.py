@@ -326,7 +326,7 @@ else:
     result_placeholder = st.empty()
 
     with result_placeholder.container():
-        st.info("画像をアップロードして「変換」ボタンを押してください")
+        st.info("画像をアップロードして「変換」ボタンを押してください。何度も押さないように注意してください。")
 
     # 変換ボタン（生成完了後は非表示）
     if uploaded_file and not st.session_state.generation_completed:
