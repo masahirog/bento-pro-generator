@@ -130,6 +130,27 @@ def get_image_bytes_from_s3(key):
         st.error(f"S3ダウンロードエラー: {str(e)}")
         return None
 
+def delete_history_from_s3(timestamp):
+    """S3から指定されたタイムスタンプの履歴を削除"""
+    if not s3_client:
+        return False
+    try:
+        # フォルダ内のすべてのオブジェクトを取得
+        response = s3_client.list_objects_v2(
+            Bucket=S3_BUCKET_NAME,
+            Prefix=f"{timestamp}/"
+        )
+
+        if 'Contents' in response:
+            # すべてのオブジェクトを削除
+            for obj in response['Contents']:
+                s3_client.delete_object(Bucket=S3_BUCKET_NAME, Key=obj['Key'])
+
+        return True
+    except ClientError as e:
+        st.error(f"S3削除エラー: {str(e)}")
+        return False
+
 # セッションステート初期化
 if 'processing' not in st.session_state:
     st.session_state.processing = False
@@ -137,6 +158,12 @@ if 'generation_completed' not in st.session_state:
     st.session_state.generation_completed = False
 if 'current_uploaded_file' not in st.session_state:
     st.session_state.current_uploaded_file = None
+
+# クエリパラメータから履歴を読み込み
+if 'history' in st.query_params:
+    st.session_state.selected_history = st.query_params['history']
+elif 'selected_history' not in st.session_state:
+    st.session_state.selected_history = None
 
 # 履歴フォルダの作成
 HISTORY_DIR = "history"
@@ -149,6 +176,7 @@ with st.sidebar:
     # AI加工ボタン
     if st.button("TOP", use_container_width=True, type="primary"):
         st.session_state.selected_history = None
+        st.query_params.clear()
         st.rerun()
 
     st.markdown("---")
@@ -163,6 +191,7 @@ with st.sidebar:
         for folder in history_folders[:10]:
             if st.button(f"{folder}", key=f"hist_{folder}", use_container_width=True):
                 st.session_state.selected_history = folder
+                st.query_params['history'] = folder
                 st.rerun()
     else:
         st.info("まだ履歴がありません")
@@ -205,7 +234,7 @@ if 'selected_history' in st.session_state and st.session_state.selected_history:
     if metadata:
         # 設定情報表示
         st.markdown("### 設定情報")
-        col_info1, col_info2, col_info3, col_info4, col_info5 = st.columns(5)
+        col_info1, col_info2, col_info3, col_info4, col_info5, col_info6 = st.columns(6)
         with col_info1:
             st.metric("背景", metadata.get('background', 'N/A'))
         with col_info2:
@@ -216,6 +245,8 @@ if 'selected_history' in st.session_state and st.session_state.selected_history:
             st.metric("余白", metadata.get('margin', 'N/A'))
         with col_info5:
             st.metric("向き", metadata.get('rotation', 'N/A'))
+        with col_info6:
+            st.metric("容器補正", metadata.get('container_clean', 'N/A'))
 
         st.metric("処理時間", f"{metadata.get('total_time', 0):.2f}秒")
 
@@ -252,10 +283,26 @@ if 'selected_history' in st.session_state and st.session_state.selected_history:
             else:
                 st.warning("画像が見つかりません")
 
+        # 削除ボタン
+        st.markdown("---")
+        col_del1, col_del2, col_del3 = st.columns([1, 1, 1])
+        with col_del2:
+            if st.button("この履歴を削除", type="secondary", use_container_width=True):
+                with st.spinner("削除中..."):
+                    if delete_history_from_s3(timestamp):
+                        st.success("履歴を削除しました")
+                        st.session_state.selected_history = None
+                        st.query_params.clear()
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("削除に失敗しました")
+
     else:
         st.error("履歴データが見つかりません")
         if st.button("← 戻る"):
             st.session_state.selected_history = None
+            st.query_params.clear()
             st.rerun()
 else:
     # 通常の新規作成画面（1列レイアウト）
@@ -315,7 +362,15 @@ else:
     st.markdown("#### 弁当の向き")
     rotation = st.radio(
         "rotation_label",
-        ["正面配置", "軽く回転", "斜め配置"],
+        ["正面配置", "斜め配置"],
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+
+    st.markdown("#### 容器汚れ補正")
+    container_clean = st.radio(
+        "container_clean_label",
+        ["補正なし", "容器汚れを補正"],
         horizontal=True,
         label_visibility="collapsed"
     )
@@ -405,17 +460,16 @@ else:
                     "和紙": "traditional Japanese washi paper background"
                 }
 
-                # 撮影角度設定（上下の角度のみ）
+                # 撮影角度設定（y軸方向：テーブル面に対するカメラ角度）
                 angle_map = {
-                    "斜め45度": "High-angle shot (approx 45 degrees from above).",
-                    "真上俯瞰": "Overhead shot (90 degrees, directly from above).",
-                    "やや低め30度": "Low-angle shot (approx 30 degrees from above)."
+                    "斜め45度": "Camera angle: EXACTLY 45 degrees from the table surface (NOT overhead, NOT 90 degrees). The camera looks down at the bento from a diagonal elevated position, maintaining a clear 45-degree angle between the camera and the table.",
+                    "真上俯瞰": "Camera angle: 90 degrees (directly overhead, bird's-eye view). The camera is positioned straight above the bento, perpendicular to the table surface.",
+                    "やや低め30度": "Camera angle: 30 degrees from the table surface. Lower elevated angle shot, closer to eye-level than overhead."
                 }
 
                 # 弁当の向き設定（水平回転）- 命令形で直接的に指示
                 rotation_map = {
                     "正面配置": "Place the bento box perfectly straight and parallel to the camera frame, with all edges aligned to the image borders. NO rotation whatsoever.",
-                    "軽く回転": "Rotate the bento box slightly (about 15-20 degrees clockwise) from the parallel position to add subtle depth and dimension.",
                     "斜め配置": "Rotate the bento box diagonally (about 45 degrees clockwise) to create dynamic depth and visual interest. The box should NOT be parallel to the frame."
                 }
 
@@ -428,9 +482,9 @@ else:
 
                 # 余白設定
                 margin_map = {
-                    "狭い": "The bento box fills most of the frame with minimal margins around it.",
-                    "標準": "The bento box is centered with moderate margins around it.",
-                    "広い": "The bento box is centered with generous margins and plenty of negative space around it."
+                    "狭い": "The bento box occupies approximately 80-90% of the frame with minimal margins. Close-up composition.",
+                    "標準": "The bento box occupies approximately 60-70% of the frame with moderate margins around it, centered in the composition.",
+                    "広い": "The bento box occupies only 40-50% of the frame. MUST leave generous margins and plenty of negative space around all sides. The bento should be small in the frame, NOT filling it."
                 }
 
                 # 1. 回転指示（最優先で最初に配置）
@@ -453,6 +507,17 @@ else:
                 progress_bar.progress(100)
                 step3_start = time.time()
 
+                # 容器清掃指示（選択された場合のみ）
+                container_clean_instruction = ""
+                if container_clean == "汚れを補正":
+                    container_clean_instruction = """
+CONTAINER CLEANING:
+- Clean any sauce stains, oil marks, or liquid spills on the bento box container surfaces (walls, edges, exterior)
+- The container should look pristine and clean
+- CRITICAL: Do NOT alter, change, or modify the food contents inside the compartments
+- Only clean the container itself, not the food
+"""
+
                 # 画像参照型プロンプト（元画像を見ながらスタイルだけを変換）
                 reference_prompt = f"""
 Refine this specific image into a professional commercial food photography style.
@@ -467,6 +532,8 @@ STRICT CONSTRAINTS:
 {style_part}
 
 {lighting_part}
+
+{container_clean_instruction}
 
 Subject Content for reference:
 {analyzed_content}
@@ -525,6 +592,7 @@ Subject Content for reference:
                         "lighting": lighting,
                         "margin": margin,
                         "rotation": rotation,
+                        "container_clean": container_clean,
                         "analyzed_content": analyzed_content,
                         "full_prompt": final_prompt,
                         "step1_time": step1_time,
@@ -537,6 +605,12 @@ Subject Content for reference:
                     progress_bar.empty()
                     st.session_state.processing = False
                     st.session_state.generation_completed = True
+
+                    # 生成完了後、履歴詳細ページへ遷移
+                    st.session_state.selected_history = timestamp
+                    st.query_params['history'] = timestamp
+                    time.sleep(1)
+                    st.rerun()
                 else:
                     st.error("画像生成に失敗しました。もう一度お試しください。")
                     status_text.empty()
