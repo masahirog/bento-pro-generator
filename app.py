@@ -709,6 +709,9 @@ else:
                 # Exif情報に基づいて自動回転（向きを維持）
                 image_copy = ImageOps.exif_transpose(image_copy)
                 image_copy.thumbnail((1024, 1024))
+                # RGBA形式の場合はRGBに変換してからJPEG保存
+                if image_copy.mode == 'RGBA':
+                    image_copy = image_copy.convert('RGB')
                 image_copy.save(img_byte_arr, format='JPEG')
                 img_byte_arr.seek(0)  # ストリームを先頭に戻す
 
