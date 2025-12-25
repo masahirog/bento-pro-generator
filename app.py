@@ -83,8 +83,9 @@ def save_metadata_to_s3(metadata, key):
         st.error(f"S3アップロードエラー: {str(e)}")
         return False
 
+@st.cache_data(ttl=3600)
 def get_image_from_s3(key):
-    """S3から画像を取得"""
+    """S3から画像を取得（キャッシュ付き）"""
     if not s3_client:
         return None
     try:
@@ -94,8 +95,9 @@ def get_image_from_s3(key):
         # サムネイルが存在しない場合など、静かに None を返す
         return None
 
+@st.cache_data(ttl=3600)
 def get_metadata_from_s3(key):
-    """S3からメタデータ(JSON)を取得"""
+    """S3からメタデータ(JSON)を取得（キャッシュ付き）"""
     if not s3_client:
         return None
     try:
@@ -183,6 +185,7 @@ with st.sidebar:
         st.rerun()
 
     if st.button("加工履歴一覧", use_container_width=True, type="secondary"):
+        st.query_params.clear()  # すべてのパラメータをクリア
         st.query_params['view'] = 'list'
         st.session_state.selected_history = None
         st.rerun()
@@ -197,6 +200,7 @@ with st.sidebar:
             if st.button(f"{folder}", key=f"hist_{folder}", use_container_width=True):
                 st.session_state.selected_history = folder
                 st.query_params['history'] = folder
+                st.query_params.pop('view', None)  # view=listを削除
                 st.rerun()
     else:
         st.info("まだ履歴がありません")
@@ -241,7 +245,7 @@ if view_mode == 'list':
     search_query = st.text_input("タイトル、タグ、内容で検索", placeholder="例: ハンバーグ")
 
     # ページネーション設定
-    items_per_page = 20
+    items_per_page = 10
     total_pages = (len(history_folders) - 1) // items_per_page + 1 if history_folders else 0
 
     # セッションステートでページ番号を管理
@@ -294,9 +298,16 @@ if view_mode == 'list':
                         # 固定高さのコンテナを作成
                         with st.container():
                             # カード全体のHTMLを構築（固定高さ）
-                            # 変更前と変更後の画像を取得
-                            original_img = get_image_from_s3(f"{folder}/original.png")
-                            generated_img = get_image_from_s3(f"{folder}/generated.png")
+                            # 変更前と変更後のサムネイル画像を取得（高速化のため）
+                            original_img = get_image_from_s3(f"{folder}/original_thumbnail.png")
+                            if not original_img:
+                                # サムネイルがない場合はフルサイズを取得
+                                original_img = get_image_from_s3(f"{folder}/original.png")
+
+                            generated_img = get_image_from_s3(f"{folder}/thumbnail.png")
+                            if not generated_img:
+                                # サムネイルがない場合はフルサイズを取得
+                                generated_img = get_image_from_s3(f"{folder}/generated.png")
 
                             # 画像HTML（2枚並べて表示）
                             import base64
@@ -927,10 +938,15 @@ Refine this specific image into a professional commercial food photography style
                     # 元画像をS3に保存
                     save_image_to_s3(image, f"{timestamp}/original.png")
 
+                    # 元画像のサムネイル生成（長辺400px）
+                    original_thumbnail = image.copy()
+                    original_thumbnail.thumbnail((400, 400), Image.Resampling.LANCZOS)
+                    save_image_to_s3(original_thumbnail, f"{timestamp}/original_thumbnail.png")
+
                     # 生成画像をS3に保存
                     save_image_to_s3(generated_image, f"{timestamp}/generated.png")
 
-                    # サムネイル生成（長辺400px）
+                    # 生成画像のサムネイル生成（長辺400px）
                     thumbnail = generated_image.copy()
                     thumbnail.thumbnail((400, 400), Image.Resampling.LANCZOS)
                     save_image_to_s3(thumbnail, f"{timestamp}/thumbnail.png")
