@@ -294,21 +294,45 @@ if view_mode == 'list':
                         # 固定高さのコンテナを作成
                         with st.container():
                             # カード全体のHTMLを構築（固定高さ）
-                            thumbnail = get_image_from_s3(f"{folder}/thumbnail.png")
-                            if not thumbnail:
-                                thumbnail = get_image_from_s3(f"{folder}/generated.png")
+                            # 変更前と変更後の画像を取得
+                            original_img = get_image_from_s3(f"{folder}/original.png")
+                            generated_img = get_image_from_s3(f"{folder}/generated.png")
 
-                            # 画像HTML
-                            if thumbnail:
-                                # 画像を一時的に保存してbase64エンコード
-                                import base64
-                                from io import BytesIO
+                            # 画像HTML（2枚並べて表示）
+                            import base64
+                            from io import BytesIO
+
+                            images_html = '<div style="display: flex; gap: 4px; margin-bottom: 8px;">'
+
+                            # 変更前画像
+                            if original_img:
                                 buffered = BytesIO()
-                                thumbnail.save(buffered, format="PNG")
+                                original_img.save(buffered, format="PNG")
                                 img_str = base64.b64encode(buffered.getvalue()).decode()
-                                img_html = f'<img src="data:image/png;base64,{img_str}" style="width: 100%; height: 200px; object-fit: cover; border-radius: 4px;">'
+                                images_html += f'''
+                                <div style="flex: 1;">
+                                    <div style="font-size: 0.7em; color: #666; margin-bottom: 2px; text-align: center;">変更前</div>
+                                    <img src="data:image/png;base64,{img_str}" style="width: 100%; height: 200px; object-fit: cover; border-radius: 4px;">
+                                </div>
+                                '''
                             else:
-                                img_html = '<div style="height: 200px; background-color: #f0f0f0; display: flex; align-items: center; justify-content: center; border-radius: 4px;">画像なし</div>'
+                                images_html += '<div style="flex: 1;"><div style="font-size: 0.7em; color: #666; margin-bottom: 2px; text-align: center;">変更前</div><div style="height: 200px; background-color: #f0f0f0; display: flex; align-items: center; justify-content: center; border-radius: 4px; font-size: 0.8em;">画像なし</div></div>'
+
+                            # 変更後画像
+                            if generated_img:
+                                buffered = BytesIO()
+                                generated_img.save(buffered, format="PNG")
+                                img_str = base64.b64encode(buffered.getvalue()).decode()
+                                images_html += f'''
+                                <div style="flex: 1;">
+                                    <div style="font-size: 0.7em; color: #666; margin-bottom: 2px; text-align: center;">変更後</div>
+                                    <img src="data:image/png;base64,{img_str}" style="width: 100%; height: 200px; object-fit: cover; border-radius: 4px;">
+                                </div>
+                                '''
+                            else:
+                                images_html += '<div style="flex: 1;"><div style="font-size: 0.7em; color: #666; margin-bottom: 2px; text-align: center;">変更後</div><div style="height: 200px; background-color: #f0f0f0; display: flex; align-items: center; justify-content: center; border-radius: 4px; font-size: 0.8em;">画像なし</div></div>'
+
+                            images_html += '</div>'
 
                             # タイトルHTML
                             title = metadata.get('title', folder)
@@ -321,12 +345,10 @@ if view_mode == 'list':
                             tags_str = " ".join([f"<code>{tag}</code>" for tag in metadata.get('tags', [])])
                             tags_html = f'<div style="height: 40px; font-size: 0.85em; overflow: hidden; padding: 4px 8px;">{tags_str if tags_str else "&nbsp;"}</div>'
 
-                            # カード全体をHTMLで表示（ボタンエリアを除く）
+                            # カード全体をHTMLで表示
                             st.markdown(f'''
                                 <div style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; background-color: white; margin-bottom: 8px;">
-                                    <div style="margin-bottom: 8px;">
-                                        {img_html}
-                                    </div>
+                                    {images_html}
                                     <div style="margin-bottom: 4px;">
                                         {title_html}
                                     </div>
@@ -336,8 +358,8 @@ if view_mode == 'list':
                                 </div>
                             ''', unsafe_allow_html=True)
 
-                            # 詳細ボタンをカードの下部に配置
-                            if st.button("詳細", key=f"detail_{folder}", use_container_width=True):
+                            # 詳細ボタン
+                            if st.button("詳細を見る", key=f"card_{folder}", use_container_width=True, type="primary"):
                                 st.session_state.selected_history = folder
                                 st.query_params['history'] = folder
                                 st.query_params.pop('view', None)
